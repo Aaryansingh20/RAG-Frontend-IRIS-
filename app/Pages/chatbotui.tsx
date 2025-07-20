@@ -246,7 +246,8 @@ const ChatInterface = () => {
       const formData = new FormData();
       formData.append("message", inputValue);
       uploadedFiles.forEach((file) => formData.append("files", file));
-      const res = await fetch("http://localhost:8000/chat", {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+      const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
         body: formData,
       });
