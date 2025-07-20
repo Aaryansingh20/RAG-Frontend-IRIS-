@@ -189,7 +189,7 @@ const ChatInterface = () => {
     if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
     let i = 0;
     typingIntervalRef.current = setInterval(() => {
-      setInputValue(typingTranscript.slice(0, i + 1));
+      // setInputValue(typingTranscript.slice(0, i + 1)); // Removed to prevent bot response in input
       i++;
       if (i >= typingTranscript.length) {
         if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
