@@ -26,7 +26,6 @@ interface Message {
   isUser: boolean;
   timestamp: Date;
   files?: File[];
-  isTypewriter?: boolean;
 }
 
 // Utility to split message into text and code blocks
@@ -167,45 +166,15 @@ const ChatInterface = () => {
   const [inputValue, setInputValue] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isBotTyping, setIsBotTyping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [listening, setListening] = useState(false);
-  const [typingTranscript, setTypingTranscript] = useState<string | null>(null);
-  const typingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  // Add state for typewriter effect
-  const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
-  const typewriterTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isBotTyping]);
-
-  // Animate typingTranscript into inputValue
-  useEffect(() => {
-    if (typingTranscript === null) return;
-    if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-    let i = 0;
-    typingIntervalRef.current = setInterval(() => {
-      // setInputValue(typingTranscript.slice(0, i + 1)); // Removed to prevent bot response in input
-      i++;
-      if (i >= typingTranscript.length) {
-        if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-      }
-    }, 18);
-    return () => {
-      if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-    };
-  }, [typingTranscript]);
-
-  // Clean up typewriter timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (typewriterTimeoutRef.current) clearTimeout(typewriterTimeoutRef.current);
-    };
-  }, []);
+  }, [messages]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -231,6 +200,7 @@ const ChatInterface = () => {
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() && uploadedFiles.length === 0) return;
+    
     const newMessage: Message = {
       id: Date.now().toString(),
       content: inputValue,
@@ -238,48 +208,36 @@ const ChatInterface = () => {
       timestamp: new Date(),
       files: uploadedFiles.length > 0 ? [...uploadedFiles] : [],
     };
+    
     setMessages(prev => [...prev, newMessage]);
     setInputValue('');
     setLoading(true);
-    setIsBotTyping(true);
+    
     try {
       const formData = new FormData();
       formData.append("message", inputValue);
       uploadedFiles.forEach((file) => formData.append("files", file));
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+      
       const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
         body: formData,
       });
+      
       if (!res.ok) throw new Error("Chat failed");
       const data = await res.json();
-      const botId = Date.now().toString() + Math.random();
-      setTypingMessageId(botId);
-      setTypingTranscript(null);
+      
+      // Add bot response immediately - no typewriter effect
       setMessages(prev => [
         ...prev,
         {
-          id: botId,
-          content: '', // Will be filled by typewriter
+          id: Date.now().toString() + Math.random(),
+          content: data.response,
           isUser: false,
           timestamp: new Date(),
         },
       ]);
-      // Start typewriter effect
-      let i = 0;
-      const fullText = data.response;
-      function typeNext() {
-        setTypingTranscript(fullText.slice(0, i + 1));
-        setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: fullText.slice(0, i + 1) } : m));
-        i++;
-        if (i < fullText.length) {
-          typewriterTimeoutRef.current = setTimeout(typeNext, 18);
-        } else {
-          setTypingMessageId(null);
-          setIsBotTyping(false);
-        }
-      }
-      typeNext();
+      
       setUploadedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch {
@@ -292,7 +250,6 @@ const ChatInterface = () => {
           timestamp: new Date(),
         },
       ]);
-      setIsBotTyping(false);
     } finally {
       setLoading(false);
     }
@@ -311,112 +268,88 @@ const ChatInterface = () => {
   return (
     <div className="w-full h-full flex flex-col bg-[hsl(220,13%,13%)] dark:bg-[#09090b]">
       <div className="flex flex-col w-full h-full max-w-4xl mx-auto bg-[hsl(220,13%,13%)] dark:bg-[#09090b]">
-        {/* Header */}
-        {/* <div className="flex items-center justify-between p-3 sm:p-4 border-b border-[hsl(220,13%,23%)] dark:border-[hsl(217.2,32.6%,17.5%)]">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="w-5 h-5 sm:w-6 sm:h-6 bg-[hsl(217,91%,60%)] dark:bg-[hsl(210,40%,98%)] rounded-sm flex items-center justify-center">
-              <span className="text-[hsl(0,0%,98%)] dark:text-[hsl(222.2,47.4%,11.2%)] text-xs sm:text-sm font-bold">📋</span>
-            </div>
-            <h1 className="text-[hsl(0,0%,95%)] dark:text-[hsl(210,40%,98%)] font-medium text-sm sm:text-base">Iris</h1>
-          </div>
-          <Button
-            className="flex items-center text-[hsl(220,9%,46%)] hover:text-[hsl(0,0%,95%)] dark:text-[hsl(215,20.2%,65.1%)] dark:hover:text-[hsl(210,40%,98%)] text-xs sm:text-sm px-2"
-          >
-            <Share className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-            <span className="hidden sm:inline">Share</span>
-          </Button>
-        </div> */}
-
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 sm:space-y-6">
-          {messages.map((message, idx) => {
-            const isLastBot =
-              !message.isUser &&
-              idx === messages.findLastIndex((m) => !m.isUser);
-            return (
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`flex gap-2 sm:gap-3 ${message.isUser ? 'justify-end' : 'justify-start'}`}
+            >
+              {!message.isUser && (
+                <Avatar className="w-6 h-6 sm:w-8 sm:h-8 bg-[#2563eb] dark:bg-[#2563eb] flex-shrink-0">
+                  <AvatarFallback className="bg-[#2563eb] dark:bg-[#2563eb] text-white text-xs sm:text-sm font-medium">
+                    A
+                  </AvatarFallback>
+                </Avatar>
+              )}
+              
               <div
-                key={message.id}
-                className={`flex gap-2 sm:gap-3 ${message.isUser ? 'justify-end' : 'justify-start'}`}
+                className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-[#18171c] text-white`}
               >
-                {!message.isUser && (
-                  <Avatar className="w-6 h-6 sm:w-8 sm:h-8 bg-[#2563eb] dark:bg-[#2563eb] flex-shrink-0">
-                    <AvatarFallback className="bg-[#2563eb] dark:bg-[#2563eb] text-white text-xs sm:text-sm font-medium">
-                      A
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-                
-                <div
-                  className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-[#18171c] text-white`}
-                >
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                    {!message.isUser && isLastBot
-                      ? renderStructuredMessage(typeof message.content === 'string' ? message.content : '')
-                      : message.isUser
-                        ? message.content
-                        : renderStructuredMessage(message.content)
-                    }
-                  </div>
-                  {/* Display attached files */}
-                  {message.files && message.files.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {message.files.map((file) => (
-                        <div
-                          key={file.name}
-                          className="flex items-center gap-2 p-2 bg-[#18171c] text-white rounded-lg border border-[#232323] max-w-xs sm:max-w-sm w-full overflow-x-auto"
-                        >
-                          <FileText className="w-4 h-4 text-[#2563eb] flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-medium truncate">
-                              {file.name}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {formatFileSize(file.size)}
-                            </div>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {message.isUser ? message.content : renderStructuredMessage(message.content)}
+                </div>
+                {/* Display attached files */}
+                {message.files && message.files.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {message.files.map((file) => (
+                      <div
+                        key={file.name}
+                        className="flex items-center gap-2 p-2 bg-[#18171c] text-white rounded-lg border border-[#232323] max-w-xs sm:max-w-sm w-full overflow-x-auto"
+                      >
+                        <FileText className="w-4 h-4 text-[#2563eb] flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium truncate">
+                            {file.name}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {formatFileSize(file.size)}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Add a copy/like/dislike row below each bot message */}
-                  {!message.isUser && (
-                    <div className="flex justify-end mt-2 mr-2">
-                      <div className="flex gap-2">
-                        <button
-                          className="p-1 rounded transition-colors"
-                          title="Copy"
-                          onClick={() => navigator.clipboard.writeText(message.content || '')}
-                        >
-                          <Copy className="w-4 h-4 text-[#888] hover:text-[#fff]" />
-                        </button>
-                        <button
-                          className="p-1 rounded transition-colors"
-                          title="Like"
-                        >
-                          <ThumbsUp className="w-4 h-4 text-[#888] hover:text-[#fff]" />
-                        </button>
-                        <button
-                          className="p-1 rounded transition-colors"
-                          title="Dislike"
-                        >
-                          <ThumbsDown className="w-4 h-4 text-[#888] hover:text-[#fff]" />
-                        </button>
                       </div>
+                    ))}
+                  </div>
+                )}
+                {/* Add a copy/like/dislike row below each bot message */}
+                {!message.isUser && (
+                  <div className="flex justify-end mt-2 mr-2">
+                    <div className="flex gap-2">
+                      <button
+                        className="p-1 rounded transition-colors"
+                        title="Copy"
+                        onClick={() => navigator.clipboard.writeText(message.content || '')}
+                      >
+                        <Copy className="w-4 h-4 text-[#888] hover:text-[#fff]" />
+                      </button>
+                      <button
+                        className="p-1 rounded transition-colors"
+                        title="Like"
+                      >
+                        <ThumbsUp className="w-4 h-4 text-[#888] hover:text-[#fff]" />
+                      </button>
+                      <button
+                        className="p-1 rounded transition-colors"
+                        title="Dislike"
+                      >
+                        <ThumbsDown className="w-4 h-4 text-[#888] hover:text-[#fff]" />
+                      </button>
                     </div>
-                  )}
-                </div>
-
-                {message.isUser && (
-                  <Avatar className="w-6 h-6 sm:w-8 sm:h-8 bg-[#2563eb] dark:bg-[#2563eb] flex-shrink-0">
-                    <AvatarFallback className="bg-[#2563eb] dark:bg-[#2563eb] text-white text-xs sm:text-sm font-medium">
-                      U
-                    </AvatarFallback>
-                  </Avatar>
+                  </div>
                 )}
               </div>
-            );
-          })}
-          {isBotTyping && !typingMessageId && (
+
+              {message.isUser && (
+                <Avatar className="w-6 h-6 sm:w-8 sm:h-8 bg-[#2563eb] dark:bg-[#2563eb] flex-shrink-0">
+                  <AvatarFallback className="bg-[#2563eb] dark:bg-[#2563eb] text-white text-xs sm:text-sm font-medium">
+                    U
+                  </AvatarFallback>
+                </Avatar>
+              )}
+            </div>
+          ))}
+          
+          {/* Simple loading indicator */}
+          {loading && (
             <div className="flex gap-2 sm:gap-3 justify-start mt-2">
               <Avatar className="w-6 h-6 sm:w-8 sm:h-8 bg-[#2563eb] dark:bg-[#2563eb] flex-shrink-0">
                 <AvatarFallback className="bg-[#2563eb] dark:bg-[#2563eb] text-white text-xs sm:text-sm font-medium">
@@ -442,7 +375,7 @@ const ChatInterface = () => {
                 <div className="text-[#b3b3b3] text-base font-medium mt-2">Hi, IRIS User!</div>
               </div>
               <h2 className="text-2xl xs:text-3xl sm:text-4xl bg-clip-text text-transparent bg-gradient-to-b from-neutral-200 to-neutral-500  font-extrabold text-center mb-2 leading-tight" style={{lineHeight:'1.1'}}>How can we help you today?</h2>
-              <p className="text-center bg-clip-text text-transparent bg-gradient-to-b from-neutral-200 to-neutral-500  max-w-xs sm:max-w-xl mb-6 text-sm sm:text-base">Let’s get started! In a few simple steps, we’ll show you how to use IRIS to unlock your productivity.</p>
+              <p className="text-center bg-clip-text text-transparent bg-gradient-to-b from-neutral-200 to-neutral-500  max-w-xs sm:max-w-xl mb-6 text-sm sm:text-base">Let&apos;s get started! In a few simple steps, we&apos;ll show you how to use IRIS to unlock your productivity.</p>
             </div>
             <div className="w-full justify-center mb-6 px-2 sm:px-0 hidden sm:flex">
               <div className="grid sm:grid-cols-3 gap-4 w-full max-w-3xl">
@@ -514,7 +447,7 @@ const ChatInterface = () => {
                   onKeyPress={handleKeyPress}
                   placeholder="What's on your mind?"
                   className="flex-1 border-none focus:border-none focus:outline-none bg-transparent focus:bg-transparent resize-none text-[hsl(0,0%,95%)] dark:text-[hsl(210,40%,98%)] placeholder:text-[hsl(220,9%,46%)] dark:placeholder:text-[hsl(215,20.2%,65.1%)] focus-visible:ring-0 focus-visible:ring-offset-0 text-sm sm:text-base disabled:opacity-60 disabled:pointer-events-none min-h-[2.5rem] sm:min-h-[3.5rem] max-h-32 pt-2 pb-1"
-                  disabled={loading || isBotTyping}
+                  disabled={loading}
                   rows={1}
                 />
                 <div className="flex items-center justify-between mt-1">
@@ -529,7 +462,7 @@ const ChatInterface = () => {
                     <Button
                       type="button"
                       onClick={() => {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        // Voice recognition code remains the same...
                         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
                         if (!SpeechRecognition) {
                           alert("Voice recognition not supported in this browser.");
@@ -541,28 +474,15 @@ const ChatInterface = () => {
                         recognition.maxAlternatives = 1;
 
                         recognition.onstart = () => setListening(true);
-                        recognition.onend = () => {
-                          setListening(false);
-                          setTypingTranscript(null);
-                          if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-                        };
-                        recognition.onerror = () => {
-                          setListening(false);
-                          setTypingTranscript(null);
-                          if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
-                        };
+                        recognition.onend = () => setListening(false);
+                        recognition.onerror = () => setListening(false);
 
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         recognition.onresult = (event: any) => {
                           const transcript = Array.from(event.results)
                             .map((result) => (result as SpeechRecognitionResult)[0].transcript)
                             .join('');
                           if (event.results[0].isFinal) {
-                            // Animate the final transcript into the input
-                            setTypingTranscript(transcript);
-                          } else {
-                            // Animate interim transcript
-                            setTypingTranscript(transcript);
+                            setInputValue(transcript);
                           }
                         };
 
@@ -577,7 +497,7 @@ const ChatInterface = () => {
                   <Button
                     type="button"
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim() && uploadedFiles.length === 0 || loading || isBotTyping}
+                    disabled={!inputValue.trim() && uploadedFiles.length === 0 || loading}
                     className="w-7 h-7 sm:w-8 sm:h-8 p-0 flex items-center justify-center bg-[#2563eb] hover:bg-[#3b82f6] text-white disabled:opacity-50 disabled:pointer-events-none rounded-full flex-shrink-0"
                   >
                     <Send className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
