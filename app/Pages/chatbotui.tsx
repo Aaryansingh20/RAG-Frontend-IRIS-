@@ -9,6 +9,41 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 declare module 'react-syntax-highlighter';
 declare module 'react-syntax-highlighter/dist/esm/styles/prism';
 
+// TypeScript: Add missing types for SpeechRecognition API
+// These types are not always present in the DOM lib, so we define them here
+
+type SpeechRecognitionResultList = {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+};
+
+interface SpeechRecognitionEvent extends Event {
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultList;
+}
+
+// Minimal interface for SpeechRecognition instance
+interface ISpeechRecognition extends EventTarget {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: unknown;
+    webkitSpeechRecognition: unknown;
+  }
+}
+
 function Button({ children, className = '', ...props }: React.PropsWithChildren<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   return <button className={`transition-colors ${className}`} {...props}>{children}</button>
 }
@@ -218,26 +253,37 @@ const ChatInterface = () => {
       formData.append("message", inputValue);
       uploadedFiles.forEach((file) => formData.append("files", file));
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-      
-      const res = await fetch(`${apiUrl}/chat`, {
+      // Use the streaming endpoint
+      const res = await fetch(`${apiUrl}/chat-stream`, {
         method: "POST",
         body: formData,
       });
-      
-      if (!res.ok) throw new Error("Chat failed");
-      const data = await res.json();
-      
-      // Add bot response immediately - no typewriter effect
+      if (!res.ok || !res.body) throw new Error("Chat failed");
+      // Stream the response
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let botMessage = "";
+      let done = false;
+      // Add a placeholder bot message
+      const botMsgId = Date.now().toString() + Math.random();
       setMessages(prev => [
         ...prev,
         {
-          id: Date.now().toString() + Math.random(),
-          content: data.response,
+          id: botMsgId,
+          content: "",
           isUser: false,
           timestamp: new Date(),
         },
       ]);
-      
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+          const chunk = decoder.decode(value);
+          botMessage += chunk;
+          setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, content: botMessage } : m));
+        }
+      }
       setUploadedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch {
@@ -463,12 +509,12 @@ const ChatInterface = () => {
                       type="button"
                       onClick={() => {
                         // Voice recognition code remains the same...
-                        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                         if (!SpeechRecognition) {
                           alert("Voice recognition not supported in this browser.");
                           return;
                         }
-                        const recognition = new SpeechRecognition();
+                        const recognition = new (SpeechRecognition as { new(): ISpeechRecognition })();
                         recognition.lang = "en-US";
                         recognition.interimResults = true;
                         recognition.maxAlternatives = 1;
@@ -477,7 +523,7 @@ const ChatInterface = () => {
                         recognition.onend = () => setListening(false);
                         recognition.onerror = () => setListening(false);
 
-                        recognition.onresult = (event: any) => {
+                        recognition.onresult = (event: SpeechRecognitionEvent) => {
                           const transcript = Array.from(event.results)
                             .map((result) => (result as SpeechRecognitionResult)[0].transcript)
                             .join('');
