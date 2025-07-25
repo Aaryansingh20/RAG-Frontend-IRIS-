@@ -55,12 +55,14 @@ function AvatarFallback({ className = '', children }: React.PropsWithChildren<{ 
   return <div className={`bg-[#2563eb] text-white ${className}`}>{children}</div>
 }
 
+// Update Message interface to support images
 interface Message {
   id: string;
   content: string;
   isUser: boolean;
   timestamp: Date;
   files?: File[];
+  images?: { page: number; index: number; ext: string; base64: string }[];
 }
 
 // Utility to split message into text and code blocks
@@ -204,6 +206,7 @@ const ChatInterface = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [listening, setListening] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null); // For paste event
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -211,10 +214,40 @@ const ChatInterface = () => {
     }
   }, [messages]);
 
+  // Clipboard paste support for images
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      if (e.clipboardData) {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+              // Prevent duplicates by name+size
+              setUploadedFiles(prev => {
+                if (prev.some(f => f.name === file.name && f.size === file.size)) return prev;
+                return [...prev, file];
+              });
+            }
+          }
+        }
+      }
+    };
+    // Use a wrapper to ensure correct type
+    const pasteListener = (e: Event) => handlePaste(e as ClipboardEvent);
+    textarea.addEventListener('paste', pasteListener);
+    return () => textarea.removeEventListener('paste', pasteListener);
+  }, []);
+
+  // 1. Update allowedExtensions to include images
+  const allowedExtensions = [".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files) {
-      const allowedExtensions = [".pdf", ".doc", ".docx"];
       const newFiles = Array.from(files)
         .filter(file => allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext)));
       setUploadedFiles(prev => [...prev, ...newFiles]);
@@ -258,32 +291,55 @@ const ChatInterface = () => {
         method: "POST",
         body: formData,
       });
-      if (!res.ok || !res.body) throw new Error("Chat failed");
-      // Stream the response
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let botMessage = "";
-      let done = false;
-      // Add a placeholder bot message
-      const botMsgId = Date.now().toString() + Math.random();
+      // Try to parse images from the /chat endpoint if available
+      let images: { page: number; index: number; ext: string; base64: string }[] = [];
+      let responseText = "";
+      if (res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        responseText = data.response;
+        images = data.images || [];
+      } else if (res.body) {
+        // Fallback for streaming text
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let botMessage = "";
+        let done = false;
+        // Add a placeholder bot message
+        const botMsgId = Date.now().toString() + Math.random();
+        setMessages(prev => [
+          ...prev,
+          {
+            id: botMsgId,
+            content: "",
+            isUser: false,
+            timestamp: new Date(),
+          },
+        ]);
+        while (!done) {
+          const { value, done: doneReading } = await reader.read();
+          done = doneReading;
+          if (value) {
+            const chunk = decoder.decode(value);
+            botMessage += chunk;
+            setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, content: botMessage } : m));
+          }
+        }
+        setUploadedFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        setLoading(false);
+        return;
+      }
+      // Add bot message with images if present
       setMessages(prev => [
         ...prev,
         {
-          id: botMsgId,
-          content: "",
+          id: Date.now().toString() + Math.random(),
+          content: responseText,
           isUser: false,
           timestamp: new Date(),
+          images,
         },
       ]);
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-          const chunk = decoder.decode(value);
-          botMessage += chunk;
-          setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, content: botMessage } : m));
-        }
-      }
       setUploadedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch {
@@ -353,6 +409,20 @@ const ChatInterface = () => {
                           </div>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                )}
+                {/* Display images returned from the backend */}
+                {message.images && message.images.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {message.images.map((img, idx) => (
+                      <img
+                        key={idx}
+                        src={`data:image/${img.ext};base64,${img.base64}`}
+                        alt={`PDF image page ${img.page} #${img.index}`}
+                        className="max-w-xs max-h-48 rounded border border-gray-700"
+                        style={{ background: '#232323' }}
+                      />
                     ))}
                   </div>
                 )}
@@ -446,28 +516,41 @@ const ChatInterface = () => {
           <div className="w-full px-3 sm:px-4 pt-2 pb-1 border-b border-[hsl(220,13%,23%)] dark:border-[hsl(217.2,32.6%,17.5%)] bg-[hsl(220,13%,15%)] dark:bg-[#09090b]">
             <div className="text-xs text-[hsl(220,9%,46%)] dark:text-[hsl(215,20.2%,65.1%)] mb-2">Uploaded files (used for all questions):</div>
             <div className="flex flex-wrap gap-2">
-              {uploadedFiles.map((file) => (
-                <div
-                  key={file.name}
-                  className="flex items-center gap-2 p-2 bg-[#18171c] text-white rounded-lg border border-[#232323] max-w-xs sm:max-w-sm w-full overflow-x-auto"
-                >
-                  <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium truncate">
-                      {file.name}
-                    </div>
-                    <div className="text-xs text-gray-400">
-                      {formatFileSize(file.size)}
-                    </div>
-                  </div>
-                  <Button
-                    onClick={() => removeUploadedFile(file.name)}
-                    className="w-5 h-5 sm:w-6 sm:h-6 p-0 text-[hsl(220,9%,46%)] dark:text-[hsl(215,20.2%,65.1%)] hover:text-[hsl(0,0%,95%)] dark:hover:text-[hsl(210,40%,98%)] flex-shrink-0"
+              {uploadedFiles.map((file) => {
+                const isImage = file.type.startsWith('image/');
+                return (
+                  <div
+                    key={file.name}
+                    className="flex items-center gap-2 p-2 bg-[#18171c] text-white rounded-lg border border-[#232323] max-w-xs sm:max-w-sm w-full overflow-x-auto"
                   >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              ))}
+                    {isImage ? (
+                      <img
+                        src={URL.createObjectURL(file)}
+                        alt={file.name}
+                        className="w-8 h-8 object-cover rounded border border-gray-700 flex-shrink-0"
+                        style={{ background: '#232323' }}
+                        onLoad={e => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
+                      />
+                    ) : (
+                      <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium truncate">
+                        {file.name}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {formatFileSize(file.size)}
+                      </div>
+                    </div>
+                    <Button
+                      onClick={() => removeUploadedFile(file.name)}
+                      className="w-5 h-5 sm:w-6 sm:h-6 p-0 text-[hsl(220,9%,46%)] dark:text-[hsl(215,20.2%,65.1%)] hover:text-[hsl(0,0%,95%)] dark:hover:text-[hsl(210,40%,98%)] flex-shrink-0"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -480,7 +563,7 @@ const ChatInterface = () => {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx"
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.bmp,.webp"
                 onChange={handleFileSelect}
                 className="hidden"
               />
@@ -488,6 +571,7 @@ const ChatInterface = () => {
               {/* In the input area, use flex-col: textarea on top, icons below */}
               <div className="flex flex-col gap-2 w-full">
                 <textarea
+                  ref={textareaRef}
                   value={inputValue}
                   onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInputValue(e.target.value)}
                   onKeyPress={handleKeyPress}
